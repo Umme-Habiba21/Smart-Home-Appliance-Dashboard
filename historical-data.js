@@ -276,7 +276,6 @@ function updateHistoricalStats(statsData) {
 }
 
 function updateSummaryChart(data, timeframe) {
-  console.log("=== DEBUG SUMMARY CHART ===");
   console.log("Timeframe:", timeframe);
   console.log("Raw data:", data);
   console.log("Data type:", typeof data);
@@ -300,7 +299,6 @@ function updateSummaryChart(data, timeframe) {
     const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
     const hourlyValues = Array(24).fill(0);
 
-    console.log("Processing hourly data...");
     console.log("Hourly values array length:", hourlyValues.length);
 
     if (Array.isArray(data) && data.length > 0) {
@@ -327,6 +325,7 @@ function updateSummaryChart(data, timeframe) {
     values = hourlyValues;
   } else {
     // Show daily data for last7 or last30
+
     if (Array.isArray(data) && data.length > 0) {
       labels = data.map((entry, index) => {
         console.log(`Daily entry ${index}:`, entry);
