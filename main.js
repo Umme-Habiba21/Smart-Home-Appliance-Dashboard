@@ -1,11 +1,52 @@
 // Device management
 let currentDeviceId = null;
 let devices = [];
-let deviceStates = {}; // Track on/off state per device
+let deviceStates = {};
 let activeSummaryRange = "today";
 
+// LocalStorage keys
+const STORAGE_KEYS = {
+  SELECTED_DEVICE_ID: "energyMonitor_selectedDeviceId",
+  ELECTRICITY_RATE: "energyMonitor_electricityRate",
+};
+
+// Device persistence functions
+function saveSelectedDeviceId(deviceId) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SELECTED_DEVICE_ID, deviceId);
+  } catch (error) {
+    console.warn("Failed to save device ID to localStorage:", error);
+  }
+}
+
+function getSelectedDeviceId() {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.SELECTED_DEVICE_ID);
+  } catch (error) {
+    console.warn("Failed to get device ID from localStorage:", error);
+    return null;
+  }
+}
+
+function saveElectricityRate(rate) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.ELECTRICITY_RATE, rate.toString());
+  } catch (error) {
+    console.warn("Failed to save electricity rate to localStorage:", error);
+  }
+}
+
+function getElectricityRate() {
+  try {
+    const rate = localStorage.getItem(STORAGE_KEYS.ELECTRICITY_RATE);
+    return rate ? parseFloat(rate) : null;
+  } catch (error) {
+    console.warn("Failed to get electricity rate from localStorage:", error);
+    return null;
+  }
+}
+
 function updateDeviceInfo(device) {
-  // Update the device information in the UI
   const deviceName = document.getElementById("device-name");
   const deviceType = document.getElementById("device-type");
   const deviceId = document.getElementById("device-id");
@@ -36,11 +77,27 @@ async function loadDevices() {
       .map((d) => `<option value="${d.id}">${d.name} (${d.type})</option>`)
       .join("");
 
-    // Select first device by default
+    // Select saved device or first device by default
     if (devices.length > 0) {
-      currentDeviceId = devices[0].id;
+      const savedDeviceId = getSelectedDeviceId();
+      let deviceToSelect = devices[0]; // Default to first device
+
+      // Check if saved device ID exists and is valid
+      if (savedDeviceId) {
+        const savedDevice = devices.find((d) => d.id === savedDeviceId);
+        if (savedDevice) {
+          deviceToSelect = savedDevice;
+          console.log("Loading saved device:", deviceToSelect.name);
+        } else {
+          console.log(
+            "Saved device ID not found in device list, using first device"
+          );
+        }
+      }
+
+      currentDeviceId = deviceToSelect.id;
       selector.value = currentDeviceId;
-      updateDeviceInfo(devices[0]);
+      updateDeviceInfo(deviceToSelect);
     }
   } catch (error) {
     console.error("Error loading devices:", error);
@@ -57,11 +114,22 @@ async function changeDevice(deviceId) {
   }
 
   currentDeviceId = deviceId;
+
+  // Save the selected device ID to localStorage
+  saveSelectedDeviceId(deviceId);
+  console.log("Device changed and saved:", deviceId);
+
   const device = devices.find((d) => d.id === deviceId);
   console.log("Device object found:", device);
 
   if (device) {
     updateDeviceInfo(device);
+
+    // 1. STOP all real-time intervals FIRST
+    if (window.realtimeInterval) {
+      clearInterval(window.realtimeInterval);
+      window.realtimeInterval = null;
+    }
 
     // Reset data structures
     powerData.labels = [];
@@ -128,6 +196,8 @@ async function changeDevice(deviceId) {
           historicalDataArray.length > 0
         ) {
           processHistoricalData(historicalDataArray);
+          powerChart.update();
+          energyChart.update();
         } else {
           console.warn("No historical data found for device:", currentDeviceId);
         }
@@ -193,6 +263,10 @@ async function changeDevice(deviceId) {
     console.log("Fetching real-time data for device:", currentDeviceId);
     try {
       await fetchDataAndRender();
+      window.realtimeInterval = setInterval(
+        fetchDataAndRender,
+        updateIntervalMs
+      );
     } catch (error) {
       console.error("Error fetching device data:", error);
     }
@@ -214,14 +288,11 @@ async function changeDevice(deviceId) {
     const button = document.getElementById("toggle-button");
     const isOn = getDeviceState(currentDeviceId);
     button.textContent = isOn ? "Turn OFF" : "Turn ON";
-
-    console.log("=== DEVICE SWITCH COMPLETE ===");
   } else {
     console.error("Device not found:", deviceId);
   }
 }
 
-// Enhanced getRealTimeSmartPlugData with better error logging
 async function getRealTimeSmartPlugData() {
   const apiEndpoint = `/.netlify/functions/get-smart-plug-data${
     currentDeviceId ? `?deviceId=${currentDeviceId}` : ""
@@ -266,7 +337,6 @@ async function getRealTimeSmartPlugData() {
   }
 }
 
-// Enhanced processAndRenderData with better logging
 async function processAndRenderData(newData) {
   console.log("Processing data:", {
     watts: newData.watts,
@@ -308,6 +378,8 @@ async function processAndRenderData(newData) {
       const storeData = {
         deviceId: currentDeviceId,
         watts: newData.watts,
+        current: newData.device.current,
+        voltage: newData.device.voltage,
         kWh: kwh_increment,
         cost: newData.energy ? kwh_increment * newData.energy.ratePerKWh : 0,
       };
@@ -346,6 +418,21 @@ async function processAndRenderData(newData) {
       await new Promise((resolve) =>
         setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000))
       );
+    }
+  }
+
+  // Update current & voltage
+  if (newData.device) {
+    if (newData.device.current !== undefined) {
+      document.getElementById(
+        "current-ma"
+      ).textContent = `${newData.device.current} mA`;
+    }
+
+    if (newData.device.voltage !== undefined) {
+      document.getElementById(
+        "voltage-v"
+      ).textContent = `${newData.device.voltage} V`;
     }
   }
 
@@ -408,141 +495,6 @@ async function processAndRenderData(newData) {
   updateCostDisplays();
 }
 
-async function changeDevice(deviceId) {
-  if (deviceId === currentDeviceId) return;
-
-  currentDeviceId = deviceId;
-  const device = devices.find((d) => d.id === deviceId);
-  if (device) {
-    updateDeviceInfo(device);
-
-    // Reset data structures
-    powerData.labels = [];
-    powerData.watts = [];
-    powerData.kwh = [];
-    powerData.cumulativeKWh = 0;
-    analytics.dailyData.today = [];
-    analytics.dailyData.yesterday = [];
-    historicalData.hourlyData = [];
-    historicalData.dailyData = [];
-
-    // Reset charts
-    powerChart.data.labels = [];
-    powerChart.data.datasets[0].data = [];
-    powerChart.update();
-
-    energyChart.data.labels = [];
-    energyChart.data.datasets[0].data = [];
-    energyChart.update();
-
-    patternsChart.data.datasets[0].data = Array(24).fill(0);
-    patternsChart.update();
-
-    // Reset summary chart
-    summaryChart.data.labels = [];
-    summaryChart.data.datasets[0].data = [];
-    summaryChart.update();
-
-    // Reset last update timestamp to calculate proper delta
-    lastUpdateTimestamp = Date.now();
-
-    // Load historical data for the new device
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-      const response = await fetch(
-        "/.netlify/functions/store-energy-data?" +
-          new URLSearchParams({
-            deviceId: currentDeviceId,
-            startTime: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-          }),
-        { signal: controller.signal }
-      );
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const historicalDataArray = await response.json();
-        if (
-          Array.isArray(historicalDataArray) &&
-          historicalDataArray.length > 0
-        ) {
-          processHistoricalData(historicalDataArray);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load historical data:", error);
-    }
-
-    // Load yesterday's data for cost comparison
-    try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const startOfYesterday = new Date(
-        yesterday.getFullYear(),
-        yesterday.getMonth(),
-        yesterday.getDate()
-      );
-      const endOfYesterday = new Date(startOfYesterday);
-      endOfYesterday.setDate(endOfYesterday.getDate() + 1);
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-      const response = await fetch(
-        "/.netlify/functions/store-energy-data?" +
-          new URLSearchParams({
-            deviceId: currentDeviceId,
-            startTime: startOfYesterday.toISOString(),
-            endTime: endOfYesterday.toISOString(),
-          }),
-        { signal: controller.signal }
-      );
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const yesterdayData = await response.json();
-        if (Array.isArray(yesterdayData) && yesterdayData.length > 0) {
-          analytics.dailyData.yesterday = yesterdayData.map((reading) => ({
-            time: new Date(reading.timestamp),
-            watts: reading.watts,
-            cost: reading.cost,
-          }));
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load yesterday's data:", error);
-    }
-
-    // Fetch new device data with timeout
-    try {
-      await fetchDataAndRender();
-    } catch (error) {
-      console.error("Error fetching device data:", error);
-    }
-
-    // Update analytics and historical view
-    try {
-      await updateHistoricalView();
-    } catch (error) {
-      console.error("Error updating historical view:", error);
-    }
-
-    try {
-      await updateCostDisplays();
-    } catch (error) {
-      console.error("Error updating cost displays:", error);
-    }
-
-    // Update button state for current device
-    const button = document.getElementById("toggle-button");
-    const isOn = getDeviceState(currentDeviceId);
-    button.textContent = isOn ? "Turn OFF" : "Turn ON";
-  }
-}
-
 const MAX_DATA_POINTS = 30; // Max points to display in the chart
 let powerData = {
   labels: [],
@@ -551,7 +503,7 @@ let powerData = {
   cumulativeKWh: 0,
 };
 let lastUpdateTimestamp = Date.now();
-const updateIntervalMs = 10000; // API fetch interval (5 seconds)
+const updateIntervalMs = 10000; // API fetch interval
 
 // --- CHART INITIALIZATION ---
 const powerCtx = document.getElementById("powerChart").getContext("2d");
@@ -651,7 +603,7 @@ async function getRealTimeSmartPlugData() {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const response = await fetch(apiEndpoint, {
       signal: controller.signal,
@@ -843,7 +795,7 @@ window.onload = function () {
         "/.netlify/functions/store-energy-data?" +
           new URLSearchParams({
             deviceId: currentDeviceId,
-            startTime: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // Last 24 hours
+            startTime: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
           })
       );
 
