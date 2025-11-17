@@ -112,7 +112,7 @@ class DatabaseService {
         },
         {
           $group: {
-             _id: { $hour: "$timestamp" },
+            _id: { $hour: "$timestamp" },
             avgWatts: { $avg: "$watts" },
             avgCurrent: { $avg: "$current" },
             maxCurrent: { $max: "$current" },
@@ -178,7 +178,7 @@ class DatabaseService {
       setting: "electricityRate",
     });
 
-    return result ? result.value : 0.15; // Default rate if not set
+    return result ? result.value : 9.5; // Default rate if not set
   }
 
   async setElectricityRate(deviceId, rate) {
