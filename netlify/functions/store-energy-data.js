@@ -190,22 +190,5 @@ exports.handler = async (event, context) => {
           process.env.NODE_ENV === "development" ? error.message : undefined,
       }),
     };
-  } finally {
-    // Keep connection cached for subsequent requests
-    // if (client) {
-    //   try {
-    //     await Promise.race([
-    //       client.close(),
-    //       new Promise((_, reject) =>
-    //         setTimeout(
-    //           () => reject(new Error("Close connection timeout")),
-    //           2000
-    //         )
-    //       ),
-    //     ]);
-    //   } catch (error) {
-    //     console.error("Error closing database connection:", error);
-    //   }
-    // }
   }
 };
